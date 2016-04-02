@@ -1,0 +1,290 @@
+---
+title: "Prudential Data V10"
+author: "Oswaldo F. Domejean"
+date: "December 24, 2015"
+output: word_document
+---
+
+Libraries
+```{r}
+library(ggplot2)
+library(gridExtra)
+library(reshape2)
+library(ellipse)
+library(vcd)
+library(plyr)
+library(dplyr)
+library(sqldf)
+library(mlbench)
+library(caret)
+library(matrixStats)
+
+
+```
+
+Read in the data:
+
+```{r, warning=FALSE, message=FALSE}
+setwd("~/Dropbox/Kaggle/Prudential Life Insurance Assesment")
+train <- read.table("train.csv", sep=",", header=TRUE)
+test <- read.table("test.csv", sep=",", header=TRUE)
+
+```
+
+Get rid of NAs en each feature and some pother processing
+
+```{r}
+
+train <- manage_na(train)
+test <- manage_na(test)
+
+#train[is.na(train)] <- 0
+#test[is.na(test)] <- 0
+
+train$Train_Flag <- 1 
+test$Train_Flag <- 0 
+test$Response <- NA 
+
+allData <- rbind(train,test) #79,146 observations, 129 variables 
+
+rm(train,test)
+
+# ONLY FOR SVM
+#lst_normal<-c("Product_Info_3", "Employment_Info_2", "InsuredInfo_3", "Medical_History_1",
+#              "Medical_History_2", "Medical_History_10", "Medical_History_15",
+#              "Medical_History_24", "Medical_History_32")
+
+#for (i in lst_normal) {
+#  #print(i)
+#  allData[,i] = (allData[,i]-min(allData[,i]))/(max(allData[,i])-min(allData[,i]))
+#  }
+
+
+```
+
+Get rid of correlated features
+
+```{r}
+
+#set.seed(3748)
+library(mlbench)
+allDataV1 <- allData[,!(names(allData) %in% c("Id", "Response", "Train_Flag", "Product_Info_2"))]
+correlationMatrix<-cor(allDataV1)
+print(correlationMatrix)
+highlyCorrelated <- findCorrelation(correlationMatrix, cutoff=0.85)
+print(highlyCorrelated)
+nomCorr <- names(allDataV1[highlyCorrelated])
+allData <- allData[,!names(allData) %in% nomCorr]
+rm(allDataV1, correlationMatrix, nomCorr)
+
+
+```
+
+
+Feature importance 
+
+```{r}
+library(randomForest)
+library(gbm)
+
+
+nobs <- nrow(train)
+indice<- sample(nrow(trainV1), 0.6*nobs, replace=FALSE)
+train1<-trainV1[indice,-107]
+
+fit = randomForest(Response ~.,data=train, nodesize=10, mtry=3, ntree=100, importance=TRUE)
+
+fit
+importance(fit)
+summary(fit)
+varImpPlot(fit)
+importance(fit,type=1)
+importance(fit,type=2)
+a<-importance(fit)
+a[sort.list(a[,1], decreasing = TRUE), ]
+a[sort.list(a[,2], decreasing = TRUE), ]
+
+fit = gbm(Response ~.,data=train[,-2], distribution = "gaussian", n.trees = 300, interaction.depth = 10, shrinkage=0.01, verbose=TRUE)
+
+summary(fit)
+gbm.perf(fit)
+
+```
+
+FEATURE ENGINEERING
+
+```{r}
+
+#Data$Wt_quintile <- group_into_buckets(Data$Wt,0.2)
+#table(Data$Wt_quintile)
+
+# NEW FEATURE: BMIAge
+allData$BMIAge<-allData$BMI*allData$Ins_Age
+
+# dummy Product_Info_2
+#dmy <- dummyVars(" ~ Product_Info_2", data = allData)
+#trsf <- data.frame(predict(dmy, newdata = allData))
+
+#allData$Product_Info_2 <- NULL
+#allData <- cbind(allData, trsf)
+#rm(trsf)
+
+```
+
+Medical Keyword new features
+
+```{r}
+#Function to sum across rows for variables defined
+
+# NEW FEATURE: MKSuma
+allData$MKSuma <- rowSums(allData[,names(allData[,grep(names(allData), pattern = "Medical_K")])])
+
+# NEW FEATURE: MKMean
+#allData$MKMean <- rowMeans(allData[,names(allData[,grep(names(allData), pattern = "Medical_K")])])
+
+# NEW FEATURE: MKsd
+ihMatrix<-as.matrix(allData[,names(allData[,grep(names(allData), pattern = "Medical_K")])])
+row_sd <- rowSds(ihMatrix)
+allData$MKsd<-row_sd
+rm(row_sd,ihMatrix)
+
+# NEW FEATURE: MKmd
+#ihMatrix<-as.matrix(allData[,names(allData[,grep(names(allData), pattern = "Medical_K")])])
+#row_md <- rowMedians(ihMatrix)
+#allData$MKmd<-row_md
+#rm(row_md,ihMatrix)
+
+```
+
+EMPLOYMENT information data
+
+```{r}
+
+# CREATING THE CHOOSEN FEATURES IN allData
+
+# New Feature EmpInf2F1 that shows the distribution of values in Employ$Employment_Info_2 and Response because the distribution of values between the two features
+
+# NEW FEATURE: EmpInf2F1
+#allData$EmplInfo2F1 <- ifelse(allData$Employment_Info_2 == 2,0,
+#             ifelse(allData$Employment_Info_2 >= 4 
+#                    & allData$Employment_Info_2 <=8,0,
+#             ifelse(allData$Employment_Info_2 == '13',0,
+#            ifelse(allData$Employment_Info_2 >= 16
+#                   & allData$Employment_Info_2 <=38,0,1))))
+
+allData$EmployMean<-rowMeans(allData[,c("Employment_Info_1", "Employment_Info_4", "Employment_Info_6")])
+
+#numero=seq(1,79146,1)
+#allData$numero <-numero
+
+# NEW FEAURE: EmpInf2Mean
+Grupo1<-allData %>%
+  group_by(Employment_Info_2) %>%
+  summarise(EmpInf2Mean=mean(EmployMean))
+allData<-merge(x = allData, y = Grupo1, by = "Employment_Info_2", all = TRUE)
+
+# NEW FEAURE: EmpInf3Mean
+#Grupo2<-allData %>%
+#  group_by(Employment_Info_3) %>%
+#  summarise(EmpInf3Mean=mean(EmployMean))
+#allData<-merge(x = allData, y = Grupo2, by = "Employment_Info_3", all = TRUE)
+
+# NEW FEAURE: EmpInf5Mean
+#Grupo3<-allData %>%
+#  group_by(Employment_Info_5) %>%
+#  summarise(EmpInf5Mean=mean(EmployMean))
+#allData<-merge(x = allData, y = Grupo3, by = "Employment_Info_5", all = TRUE)
+
+# allData <- allData[with(allData, order(numero)), ]
+rm(Grupo1)
+
+allData$EmployMean<-NULL
+#allData$Employment_Info_1 <- log(allData$Employment_Info_1)
+#allData$Employment_Info_4 <- log(allData$Employment_Info_4)
+
+```
+
+
+INSURANCE HISTORY
+In this case it's going to be used mean, Standar Deviation and Median converting the Insurance_History_x to numbers
+
+
+```{r}
+
+# NEW FEATURE: IH5Log
+
+allData$ih1<-allData$Insurance_History_1
+allData$ih2<-allData$Insurance_History_2
+allData$ih3<-allData$Insurance_History_3
+allData$ih4<-allData$Insurance_History_4
+allData$ih7<-allData$Insurance_History_7
+allData$ih8<-allData$Insurance_History_8
+allData$ih9<-allData$Insurance_History_9
+
+# NEW FEATURE: iHMean
+allData$iHMean <- rowMeans(allData[,names(allData[,grep(names(allData), pattern = "ih")])])
+
+# NEW FEATURE: iHSD
+#ihMatrix<-as.matrix(allData[,names(allData[,grep(names(allData), pattern = "ih")])])
+#row_sd <- rowSds(ihMatrix)
+#allData$iHSD<-row_sd
+#rm(row_sd,ihMatrix)
+
+# NEW FEATURE: iHMD
+#ihMatrix<-as.matrix(allData[,names(allData[,grep(names(allData), pattern = "ih")])])
+#row_md <- rowMedians(ihMatrix)
+#allData$iHMD<-row_md
+#rm(row_md,ihMatrix)
+
+allData$ih1<-NULL
+allData$ih2<-NULL
+allData$ih3<-NULL
+allData$ih4<-NULL
+allData$ih7<-NULL
+allData$ih8<-NULL
+allData$ih9<-NULL
+
+```
+
+
+
+
+```{r}
+
+train <- allData[allData$Train_Flag==1,] #59,381, 131 variables
+test <- allData[allData$Train_Flag==0,] #19,765, 131 variables
+rm(allData)
+
+train$Train_Flag <- NULL 
+test$Train_Flag <- NULL
+test$Response <- NULL
+
+save.image(file = "Prudential.RData")
+load("Prudential.RData")
+
+PruClassTrain<-lapply(train, class)
+PruClassTrain[[153]]<-"factor"
+PruClassTrain[[154]]<-"factor"
+lista<-grep("integer", PruClassTrain)
+for (i in lista) {
+  PruClassTrain[[i]] = "numeric"
+}
+save(PruClassTrain, file="listaTrain.RData")
+
+PruClassTest<-lapply(test, class)
+PruClassTest[[152]]<-"factor"
+PruClassTest[[153]]<-"factor"
+lista1<-grep("integer", PruClassTest)
+for (i in lista) {
+  PruClassTest[[i]] = "numeric"
+}
+save(PruClassTest, file="listaTest.RData")
+
+rm(lista,lista1)
+
+write.csv(train, "trainV1.csv", row.names = FALSE)
+write.csv(test, "testV1.csv", row.names = FALSE)
+
+
+```
+

@@ -1,0 +1,381 @@
+---
+title: "PruModelV20"
+author: "Oswaldo F. Domejean"
+date: "January 5, 2016"
+output: word_document
+---
+
+Libraries
+
+```{r}
+library(Metrics)
+library(Matrix)
+library(xgboost)
+library(methods)
+library(Ckmeans.1d.dp)
+library(randomForest)
+library(nnet)
+library(RCurl)
+library(gbm)
+library(caTools)
+```
+
+Data loading
+```{r}
+setwd("~/Dropbox/Prudential Life Insurance Assesment")
+load("listaTrain.RData")
+trainV1<-read.csv("trainV1.csv", sep = ",", colClasses = PruClassTrain, header = TRUE)
+
+load("listaTest.RData")
+testV1<-read.csv("testV1.csv", sep = ",", colClasses = PruClassTest, header = TRUE)
+
+```
+
+Evaluation function Kappa
+
+```{r}
+
+evalKppa <- function(preds, dtrain) {
+labels <- getinfo(dtrain, "label")
+err <- ScoreQuadraticWeightedKappa(labels,round(preds))
+return(list(metric = "kappa", value = err))}
+
+```
+
+Linear xgboost
+
+```{r}
+resp<-data.frame(pred=integer())
+
+param <- list(  objective           = "reg:linear", 
+                booster             = "gblinear",
+                eta                 = 0.3,
+                colsample_bytree    = 0.66,
+                min_child_weight    = 3,
+                subsample           = 0.71
+                # alpha             = 0.0001, 
+                # lambda            = 1
+)
+
+
+k = 10
+err.vect<-rep(NA,k)
+n = floor(nrow(train)/k)
+for(i in 1:k){
+  s1=((i-1)*n+1)
+  s2=(i*n)
+  subset=s1:s2
+  cv.train=train[-subset,]
+  cv.test=train[subset,]
+  
+  train.label <- cv.train$Response
+  test.label <- cv.test$Response
+  
+  train.data <- cv.train[,!(names(cv.train) %in% c("Id", "Response"))]
+  test.data <- cv.test[,!(names(cv.test) %in% c("Id", "Response"))]
+  
+  resp<-data.frame(pred=integer())
+  
+  dtrain <- xgb.DMatrix(data.matrix(train.data), label=train.label)
+  dvalid <- xgb.DMatrix(data.matrix(test.data), label=test.label)
+  watchlist <- list(eval = dvalid, train = dtrain)
+
+  XGBLinear <- xgb.train(data      = dtrain,
+                 params            = param, 
+                 max_depth         = 20,
+                 nrounds           = 5000,
+                 verbose           = 1,
+                 early.stop.round  = 30,
+                 watchlist         = watchlist,
+                 maximize          = FALSE,
+                 print.every.n     = 10,
+                 eval_metric       = "rmse")
+
+  #predXGB <- as.integer(round(predict(XGBLinear, data.matrix(cv.test[,feature.names]))))
+
+  predXGBLinear <- round(predict(XGBLinear, data.matrix(test.data)))
+  
+  resp[1:length(predXGBLinear),1] <- predXGBLinear
+  
+  resp[resp$pred<1, "pred"] <- 1
+  resp[resp$pred>8, "pred"] <- 8
+  
+  
+  #tst<-as.numeric(cv.test$Response)
+  ScoreQuadraticWeightedKappa(test.label,resp$pred)
+  # Kappa
+  err.vect[i]<-ScoreQuadraticWeightedKappa(cv.test$Response,resp$pred)
+
+}
+# print(paste("Kappa: ",mean(err.vect)))
+
+predXGB <- round(predict(XGBLinear, data.matrix(test[,-1])))
+  
+resp[1:length(predXGB),1] <- predXGB
+  
+resp[resp$pred<1, "pred"] <- 1
+resp[resp$pred>8, "pred"] <- 8
+
+
+################
+
+cat("making predictions\n")
+submission <- data.frame(Id=test$Id)
+submission$Response <- round(predict(XGBLinear, data.matrix(test[,-1])))
+
+# I pretended this was a regression problem and some predictions may be outside the range
+submission[submission$Response<1, "Response"] <- 1
+submission[submission$Response>8, "Response"] <- 8
+
+cat("saving the submission file\n")
+write.csv(submission, "mlr.xgboost.beatbench.csv", row.names = FALSE)
+
+
+
+##############
+
+# Importance of variables
+xgb.importance(feature_names = names(train.data), model = XGBLinear)
+
+# Important features
+imp_matrix <- xgb.importance(feature_names = names(cv.train), model = PruXGB)
+print(imp_matrix)
+
+# Feature importance bar plot by gain
+print(xgb.plot.importance(importance_matrix = imp_matrix))
+
+```
+
+Model gbm CV
+
+```{r}
+library(nnet)
+library(randomForest)
+library(gbm)
+# library(e1071)
+library(caret)
+library(RCurl)
+library(Metrics)
+library(caTools)
+
+k = 5
+err.vect<-rep(NA,k)
+n = floor(nrow(train)/k)
+for(i in 1:k){
+  s1=((i-1)*n+1)
+  s2=(i*n)
+  subset=s1:s2
+  cv.train=train[-subset,]
+  cv.test=train[subset,]  
+  
+  train.label <- cv.train$Response
+  test.label <- cv.test$Response
+  
+  train.data <- cv.train[,!(names(cv.train) %in% c("Id"))]
+  test.data <- cv.test[,!(names(cv.test) %in% c("Id", "Response"))]
+  
+  resp<-data.frame(pred=integer())
+
+  PruGBM <- gbm(Response ~.,
+              data=train.data,
+              n.trees=500,
+              distribution = "gaussian",
+              interaction.depth=10,
+              n.minobsinnode=10,
+              shrinkage=0.1,
+              # cv.folds=3,
+              n.cores=2,
+              train.fraction=1,
+              bag.fraction=0.7,
+              verbose=T)  
+
+  PredGBM=round(predict(PruGBM,newdata=test.data, n.trees=500,type="response"))
+
+  resp[1:length(PredGBM),1] <- PredGBM
+  
+  resp[resp$pred<1, "pred"] <- 1
+  resp[resp$pred>8, "pred"] <- 8
+
+  ScoreQuadraticWeightedKappa(test.label,resp$pred)
+
+  
+  # Kappa
+  err.vect[i]<-ScoreQuadraticWeightedKappa(cv.test$Response,Prediccion)
+
+}
+
+
+print(paste("Kappa: ",mean(err.vect)))
+# summary can be used for feature selection
+summary(PruGBM)
+# optimal number of trees based upon CV (red line is 
+# the validation set
+gbm.perf(PruGBM)
+
+cat("making predictions\n")
+test.data <- test[,!(names(test) %in% c("Id"))]
+
+submission <- data.frame(Id=test$Id)
+submission$Response <- round(predict(PruGBM,newdata=test.data, n.trees=500,type="response"))
+
+# I pretended this was a regression problem and some predictions may be outside the range
+submission[submission$Response<1, "Response"] <- 1
+submission[submission$Response>8, "Response"] <- 8
+
+cat("saving the submission file\n")
+write.csv(submission, "mlr.gbm.beatbench.csv", row.names = FALSE)
+
+```
+
+
+Model svm CV
+
+```{r}
+library(nnet)
+library(randomForest)
+library(gbm)
+library(e1071)
+library(caret)
+library(RCurl)
+library(Metrics)
+library(caTools)
+
+k = 5
+err.vect<-rep(NA,k)
+n = floor(nrow(train)/k)
+for(i in 1:k){
+  s1=((i-1)*n+1)
+  s2=(i*n)
+  subset=s1:s2
+  cv.train=train[-subset,]
+  cv.test=train[subset,]  
+  
+  train.label <- cv.train$Response
+  test.label <- cv.test$Response
+  
+  train.data <- cv.train[,!(names(cv.train) %in% c("Id"))]
+  test.data <- cv.test[,!(names(cv.test) %in% c("Id", "Response"))]
+  
+  resp<-data.frame(pred=integer())
+  
+  # Model SVM
+  PruSVM = svm(Response ~ ., data = train.data, kernel="linear",scale=FALSE)
+
+  # Predict SVM
+  predSVM <- predict(modelSVM, cv.test[,-318])
+  
+  PredGBM=round(predict(PruGBM,newdata=test.data, n.trees=500,type="response"))
+
+  resp[1:length(PredGBM),1] <- PredGBM
+  
+  resp[resp$pred<1, "pred"] <- 1
+  resp[resp$pred>8, "pred"] <- 8
+
+  ScoreQuadraticWeightedKappa(test.label,resp$pred)
+
+  
+  # Kappa
+  err.vect[i]<-ScoreQuadraticWeightedKappa(cv.test$Response,Prediccion)
+
+}
+
+
+print(paste("Kappa: ",mean(err.vect)))
+# summary can be used for feature selection
+summary(PruGBM)
+# optimal number of trees based upon CV (red line is 
+# the validation set
+gbm.perf(PruGBM)
+
+cat("making predictions\n")
+test.data <- test[,!(names(test) %in% c("Id"))]
+
+submission <- data.frame(Id=test$Id)
+submission$Response <- round(predict(PruGBM,newdata=test.data, n.trees=500,type="response"))
+
+# I pretended this was a regression problem and some predictions may be outside the range
+submission[submission$Response<1, "Response"] <- 1
+submission[submission$Response>8, "Response"] <- 8
+
+cat("saving the submission file\n")
+write.csv(submission, "mlr.gbm.beatbench.csv", row.names = FALSE)
+
+```
+
+
+Model Neural Networks
+
+```{r}
+library(nnet)
+?multinom
+library(caret)
+library(RCurl)
+library(Metrics)
+
+maxiterations <- 50 # try it again with a lower value and notice the mean error
+k = 5
+err.vect<-rep(NA,k)
+n = floor(nrow(trainV1)/k)
+
+for(i in 1:k){
+  s1=((i-1)*n+1)
+  s2=(i*n)
+  subset=s1:s2
+  cv.train=trainV1[-subset,]
+  cv.test=trainV1[subset,]  
+  
+  PruNN <- multinom(Response ~.,
+                    data=cv.train,
+                    maxit=maxiterations,
+                    MaxNWts=2000,
+                    trace=T) 
+  
+  predNN <- predict(PruNN, newdata=cv.test[,-60], type="class")
+  
+  # Kappa
+  err.vect[i]<-ScoreQuadraticWeightedKappa(cv.test$Response,as.numeric(as.character(predNN)))
+
+}
+print(paste("Kappa: ",mean(err.vect)))
+
+# Sort by most influential variables
+topModels <- varImp(PruNN)
+topModels$Variables <- row.names(topModels)
+topModels <- topModels[order(-topModels$Overall),]
+topModels
+
+```
+
+Ensembles
+
+```{r}
+
+Mode <- function(x) {
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]
+}
+
+setwd("~/Dropbox/Kaggle/Prudential Life Insurance Assesment")
+lineal1 <- read.table("linear.csv", sep=",", header=TRUE)
+gbm1 <- read.table("mlr.gbm.beatbench.csv", sep=",", header=TRUE)
+mlr1 <- read.table("mlr.xgboost.beatbench.csv", sep=",", header=TRUE)
+
+df<-merge(x = lineal1, y = gbm1, by = "Id", all = TRUE)
+df1<-merge(x = df, y = mlr1, by = "Id", all = TRUE)
+df1$Id <- NULL
+df1$pred <- NA
+
+for(i in 1:19765)
+  {
+    df1$pred[i] <- as.integer(Mode(df1[i,]))
+  }
+
+submission <- data.frame(Id=test$Id)
+submission$Response <- df1$pred
+write.csv(submission, "ensemble1.csv", row.names = FALSE)
+
+
+
+```
+
+
