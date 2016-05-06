@@ -9,7 +9,6 @@ Fecha: Noviembre 2015 – Febrero 2016
 	Autor: MSc. Oswaldo F. Domejean
 Email: ofigue@gmail.com
 Lugar: La Paz – BOLIVIA
-Code: . . .
 
 
 Business understanding
@@ -26,14 +25,14 @@ In the competition site where data is described and downloaded: https://www.kagg
 
 Data exploration 
 
-Data exploration had been done beginning with the analysis of each one of the variables distribution both individually and in relation to the target variable called “Responde”, then the analysis went by analyzing two and three variables and also in relation with the target. Some graphics had been done with a lot of variable combinations. 
+Data exploration had been done beginning with the analysis of each one of the variable distribution both individually and in relation to the target variable called “Response”, then the analysis went by analyzing two and three variables and also in relation with the target. Some graphics had been done with a lot of variable combinations. 
 
 
 It had been found that there is neither duplicates rows nor constant variables. It had been identified that there are some variables very low or high variations, however those variables had been kept because they could be predictive together with other variables.
 
-In the case of NAs processing, it had been decided to replace them with median, which at the model predicting stage it incremented the accuracy. There had been an analysis of the correlation between variables, an element that came up was that only when the variables with NAs had been changed with the mean, it had been found that around eight very correlated variables prone to be eliminated.
+In the case of NAs processing, it had been decided to replace them with median, which at the model predicting stage it incremented the accuracy. There had been an analysis of the correlation between variables; an element that came up was that only when the variables with NAs had been changed with the mean, it had been found that around eight very correlated variables prone to be eliminated.
 
-It had also been done a correlation analysis between categorical variables and in relation with the target variable, for that it had been used the Chi-squared statistic. After identifying the set of variables to use, the target variable had been changed to factor with eight levels (i.e. 1 -8), but the result predictions with GBM and XGBOOST were as low as fliping a coin, something that drew attention.
+It had also been done a correlation analysis between categorical variables and in relation with the target variable, for that it had been used the Chi-squared statistic. After identifying the set of variables to use, the target variable had been changed to factor with eight levels (i.e. 1 -8), but the result predictions with GBM and XGBOOST were as low as flipping a coin, something that drew attention.
 
 Then in the Kaggle competition Forum people began to say that the target variable represent the concept of risk and that it is an ordinal variable, it meant that it is better to keep it numerical because the variable order is relevant, that is what it had been done. One consideration with the used metric i.e. Quadratic Weighted Kappa, the penalty level when the prediction differs from the actual value is greater than using other metrics, therefore it make sense that the target variable were continuous.
 
@@ -48,9 +47,7 @@ A new variable with the multiplication of BMI and Age was created which proved t
 
 There was a trial and error in the process of creating new variables, for example, the row-wise mean of the variables related to employment and Insurance proved to be very predictive.
 
-In this case a process related to the process of transforming Product_Info_2 to dummy variables did not work.
-
-There had been created a lot of other variables using mean, standard deviation, median, etc., which did not prove to be relevant variables for Random forest and GBM 
+In this case a process related to the process of transforming Product_Info_2 to dummy variables did not work. There had been created a lot of other variables using mean, standard deviation, median, etc., which did not prove to be relevant variables for Random forest and GBM .
 
 
 Models and Evaluation
@@ -65,5 +62,3 @@ What happened was that mlR XGBoost model was very powerful, in terms of predicti
 Conclusion
 
 The highlight of this competition was that the use of ML models with the dataset considering a number of variables originally of factor type, which did not prove to get higher level of accuracy, but when those variables were transformed to ordinal numerical which made a big difference. The use of linear models also drew attention because the predicted values had to be adjusted by cuts in the discrete range of values 1 to 8.
-
-
